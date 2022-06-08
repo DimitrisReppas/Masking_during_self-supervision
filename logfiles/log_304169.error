@@ -1,0 +1,21 @@
+Loading pytorch-gpu/py3/1.10.1
+  Loading requirement: cuda/11.2 nccl/2.9.6-1-cuda cudnn/8.1.1.33-cuda gcc/8.4.1
+    openmpi/4.1.1-cuda intel-mkl/2020.4 magma/2.5.4-cuda sox/14.4.2
+/gpfslocalsup/pub/anaconda-py3/2021.05/envs/pytorch-gpu-1.10.1+py3.9.7/lib/python3.9/site-packages/torchvision-0.11.0a0+e7ec7e2-py3.9-linux-x86_64.egg/torchvision/transforms/transforms.py:852: UserWarning: Argument interpolation should be of type InterpolationMode instead of int. Please, use InterpolationMode enum.
+  warnings.warn(
+/gpfslocalsup/pub/anaconda-py3/2021.05/envs/pytorch-gpu-1.10.1+py3.9.7/lib/python3.9/site-packages/torch/nn/functional.py:3631: UserWarning: Default upsampling behavior when mode=bicubic is changed to align_corners=False since 0.4.0. Please specify align_corners=True if the old behavior is desired. See the documentation of nn.Upsample for details.
+  warnings.warn(
+/gpfslocalsup/pub/anaconda-py3/2021.05/envs/pytorch-gpu-1.10.1+py3.9.7/lib/python3.9/site-packages/torch/nn/functional.py:3679: UserWarning: The default behavior for interpolate/upsample with float scale_factor changed in 1.6.0 to align with other frameworks/libraries, and now uses scale_factor directly, instead of relying on the computed output size. If you wish to restore the old behavior, please set recompute_scale_factor=True. See the documentation of nn.Upsample for details. 
+  warnings.warn(
+Traceback (most recent call last):
+  File "/gpfsdswork/projects/rech/opx/upl75ty/self-supervised-project/ibot/main_ibot.py", line 707, in <module>
+    train_ibot(args)
+  File "/gpfsdswork/projects/rech/opx/upl75ty/self-supervised-project/ibot/main_ibot.py", line 408, in train_ibot
+    train_stats = train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss,
+  File "/gpfsdswork/projects/rech/opx/upl75ty/self-supervised-project/ibot/main_ibot.py", line 508, in train_one_epoch
+    fp16_scaler.scale(loss).backward()
+  File "/gpfslocalsup/pub/anaconda-py3/2021.05/envs/pytorch-gpu-1.10.1+py3.9.7/lib/python3.9/site-packages/torch/_tensor.py", line 307, in backward
+    torch.autograd.backward(self, gradient, retain_graph, create_graph, inputs=inputs)
+  File "/gpfslocalsup/pub/anaconda-py3/2021.05/envs/pytorch-gpu-1.10.1+py3.9.7/lib/python3.9/site-packages/torch/autograd/__init__.py", line 154, in backward
+    Variable._execution_engine.run_backward(
+RuntimeError: one of the variables needed for gradient computation has been modified by an inplace operation: [torch.cuda.FloatTensor [2048]] is at version 4; expected version 3 instead. Hint: enable anomaly detection to find the operation that failed to compute its gradient, with torch.autograd.set_detect_anomaly(True).

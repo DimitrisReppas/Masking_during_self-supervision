@@ -29,6 +29,12 @@ from models.head import iBOTHead
 from loader import ImageFolderMask
 from evaluation.unsupervised.unsup_cls import eval_pred
 
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel
+import subprocess
+import socket
+import pdb
+
 def get_args_parser():
     parser = argparse.ArgumentParser('iBOT', add_help=False)
 
@@ -151,13 +157,64 @@ def get_args_parser():
     return parser
 
 def train_ibot(args):
-    utils.init_distributed_mode(args)
+   # utils.init_distributed_mode(args) # comment
+    print(args.norm_last_layer)
+    print(args.norm_in_head)
+    print(args.act_in_head)
+    n_nodes = int(os.environ['SLURM_JOB_NUM_NODES'])
+    node_id = int(os.environ['SLURM_NODEID'])
+
+            # local rank on the current node / global rank
+    local_rank = int(os.environ['SLURM_LOCALID'])
+    global_rank = int(os.environ['SLURM_PROCID'])
+
+                        # number of processes / GPUs per node
+    world_size = int(os.environ['SLURM_NTASKS'])
+    n_gpu_per_node = world_size // n_nodes
+
+                                    # define master address and master port
+    hostnames = subprocess.check_output(['scontrol', 'show', 'hostnames', os.environ['SLURM_JOB_NODELIST']])
+    master_addr = hostnames.split()[0].decode('utf-8')
+
+                                                # set environment variables for 'env://'
+    os.environ['MASTER_ADDR'] = master_addr
+    os.environ['MASTER_PORT'] = str(29500)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    os.environ['RANK'] = str(global_rank)
+
+                                                                    # define whether this is the master process / if we are in distributed mode
+    is_master = node_id == 0 and local_rank == 0
+    multi_node = n_nodes > 1
+    multi_gpu = world_size > 1
+
+                                                                                    # summary
+    PREFIX = "%i - " % global_rank
+    print(PREFIX + "Number of nodes: %i" % n_nodes)
+    print(PREFIX + "Node ID        : %i" % node_id)
+    print(PREFIX + "Local rank     : %i" % local_rank)
+    print(PREFIX + "Global rank    : %i" % global_rank)
+    print(PREFIX + "World size     : %i" % world_size)
+    print(PREFIX + "GPUs per node  : %i" % n_gpu_per_node)
+    print(PREFIX + "Master         : %s" % str(is_master))
+    print(PREFIX + "Multi-node     : %s" % str(multi_node))
+    print(PREFIX + "Multi-GPU      : %s" % str(multi_gpu))
+    print(PREFIX + "Hostname       : %s" % socket.gethostname())
+
+                                                                                                                                    # set GPU device
+    torch.cuda.set_device(local_rank)
+
+    print("Initializing PyTorch distributed ...")
+    torch.distributed.init_process_group(
+        init_method='env://',
+        backend='nccl',
+    )
     utils.fix_random_seeds(args.seed)
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
+    path_20_imagenet='firtst_20%_imagenet.txt'
     transform = DataAugmentationiBOT(
         args.global_crops_scale,
         args.local_crops_scale,
@@ -166,7 +223,8 @@ def train_ibot(args):
     )
     pred_size = args.patch_size * 8 if 'swin' in args.arch else args.patch_size
     dataset = ImageFolderMask(
-        args.data_path, 
+        args.data_path,
+        annotations_file=path_20_imagenet, 
         transform=transform,
         patch_size=pred_size,
         pred_ratio=args.pred_ratio,
@@ -174,10 +232,10 @@ def train_ibot(args):
         pred_aspect_ratio=(0.3, 1/0.3),
         pred_shape=args.pred_shape,
         pred_start_epoch=args.pred_start_epoch)
-    sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True)
+    sampler = torch.utils.data.DistributedSampler(dataset, shuffle=True) # comment
     data_loader = torch.utils.data.DataLoader(
         dataset,
-        sampler=sampler,
+        sampler=sampler, # comment
         batch_size=args.batch_size_per_gpu,
         num_workers=args.num_workers,
         pin_memory=True,
@@ -221,7 +279,14 @@ def train_ibot(args):
         embed_dim = student.fc.weight.shape[1]
     else:
         print(f"Unknow architecture: {args.arch}")
-
+    print(student)
+    print(teacher)
+   #student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
+   # teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
+   # student = student.cuda()
+   # teacher = teacher.cuda()
+   # student = DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank)
+   # teacher = DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank)
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, iBOTHead(
         embed_dim,
@@ -251,14 +316,14 @@ def train_ibot(args):
         teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
 
         # we need DDP wrapper to have synchro batch norms working...
-        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[args.gpu], broadcast_buffers=False) if \
-            'swin' in args.arch else nn.parallel.DistributedDataParallel(teacher, device_ids=[args.gpu])
+        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False) if \
+            'swin' in args.arch else nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank)
         teacher_without_ddp = teacher.module
     else:
         # teacher_without_ddp and teacher are the same thing
         teacher_without_ddp = teacher
-    student = nn.parallel.DistributedDataParallel(student, device_ids=[args.gpu], broadcast_buffers=False) if \
-        'swin' in args.arch else nn.parallel.DistributedDataParallel(student, device_ids=[args.gpu])
+    student = nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False) if \
+        'swin' in args.arch else nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank)
     # teacher and student start with the same weights
     teacher_without_ddp.load_state_dict(student.module.state_dict(), strict=False)
     # there is no backpropagation through the teacher, so no need for gradients
@@ -338,7 +403,7 @@ def train_ibot(args):
     for epoch in range(start_epoch, args.epochs):
         data_loader.sampler.set_epoch(epoch)
         data_loader.dataset.set_epoch(epoch)
-
+        print('ok until here') 
         # ============ training one epoch of iBOT ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
@@ -431,6 +496,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
         # student update
         optimizer.zero_grad()
         param_norms = None
+        
         if fp16_scaler is None:
             loss.backward()
             if args.clip_grad:
@@ -543,16 +609,29 @@ class iBOTLoss(nn.Module):
                     loss2 = torch.sum(-teacher_patch_c[q] * F.log_softmax(student_patch_c[v], dim=-1), dim=-1)
                     mask = student_mask[v].flatten(-2, -1)
                     loss2 = torch.sum(loss2 * mask.float(), dim=-1) / mask.sum(dim=-1).clamp(min=1.0)
-                    total_loss2 += loss2.mean()
-                    n_loss_terms2 += 1
+                    # Original with inplace operations
+                    # total_loss2 += loss2.mean()
+                    # n_loss_terms2 += 1
+                    
+                    total_loss2 = total_loss2 + loss2.mean()
+                    n_loss_terms2 = n_loss_terms2 + 1
+
                 else:
                     loss1 = torch.sum(-teacher_cls_c[q] * F.log_softmax(student_cls_c[v], dim=-1), dim=-1)
-                    total_loss1 += loss1.mean()
-                    n_loss_terms1 += 1
+                    total_loss1 = total_loss1 + loss1.mean()
+                    n_loss_terms1 = n_loss_terms1 + 1
+                    # Original with inplace operations 
+                    #total_loss1 += loss1.mean()
+                    #n_loss_terms1 += 1
+
             
         total_loss1 = total_loss1 / n_loss_terms1 * self.lambda1
         total_loss2 = total_loss2 / n_loss_terms2 * self.lambda2
-        total_loss = dict(cls=total_loss1, patch=total_loss2, loss=total_loss1 + total_loss2)
+        cls = total_loss1
+        patch = total_loss2
+        loss = cls + patch
+        total_loss = {'cls': cls, 'patch': patch, 'loss': loss}
+        #total_loss = dict(cls=total_loss1, patch=total_loss2, loss=total_loss1 + total_loss2)
         self.update_center(teacher_cls, teacher_patch)                  
         return total_loss
 

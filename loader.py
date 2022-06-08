@@ -9,16 +9,45 @@ import math
 import numpy as np
 
 from torchvision.datasets import ImageFolder
+from torch.utils.data import Dataset
+from skimage import io
 
-class ImageFolderInstance(ImageFolder):
+import os
+import torchvision
+from PIL import Image
+
+class Listed_ImageFolder(Dataset):
+    def __init__(self, img_dir, annotations_file, transform=None):
+        with open( annotations_file, 'r') as file:
+            list_of_all = file.readlines()
+        self.data = list_of_all
+        self.img_dir = img_dir
+        self.transform = transform
+        
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        name, target = self.data[idx].strip().split(' ')
+        img_path = os.path.join(self.img_dir, name)
+       # image = io.imread(img_path)
+        image = Image.open(img_path).convert('RGB')
+       # image = torchvision.io.read_image(img_path)
+        if self.transform:
+            image = self.transform(image)
+        
+        return image, int(target)
+
+class ImageFolderInstance(Listed_ImageFolder):
     def __getitem__(self, index):
         img, target = super(ImageFolderInstance, self).__getitem__(index)
         return img, target, index
 
-class ImageFolderMask(ImageFolder):
+class ImageFolderMask(Listed_ImageFolder):
     def __init__(self, *args, patch_size, pred_ratio, pred_ratio_var, pred_aspect_ratio, 
                  pred_shape='block', pred_start_epoch=0, **kwargs):
-        super(ImageFolderMask, self).__init__(*args, **kwargs)
+        super(ImageFolderMask, self).__init__(*args,**kwargs)
         self.psz = patch_size
         self.pred_ratio = pred_ratio[0] if isinstance(pred_ratio, list) and \
             len(pred_ratio) == 1 else pred_ratio
