@@ -316,14 +316,14 @@ def train_ibot(args):
         teacher = nn.SyncBatchNorm.convert_sync_batchnorm(teacher)
 
         # we need DDP wrapper to have synchro batch norms working...
-        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False) if \
-            'swin' in args.arch else nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank)
+        teacher = nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False, find_unused_parameters=True) if \
+            'swin' in args.arch else nn.parallel.DistributedDataParallel(teacher, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         teacher_without_ddp = teacher.module
     else:
         # teacher_without_ddp and teacher are the same thing
         teacher_without_ddp = teacher
-    student = nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False) if \
-        'swin' in args.arch else nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank)
+    student = nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank, broadcast_buffers=False, find_unused_parameters=True) if \
+        'swin' in args.arch else nn.parallel.DistributedDataParallel(student, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)              # ----I SIMPLY ADDED find_unused_parameters=True TO nn.parallel.DistributedDataParallel TO SOLVE THE ERROR...IS IT OK?
     # teacher and student start with the same weights
     teacher_without_ddp.load_state_dict(student.module.state_dict(), strict=False)
     # there is no backpropagation through the teacher, so no need for gradients
@@ -583,6 +583,11 @@ class iBOTLoss(nn.Module):
         """
         student_cls, student_patch = student_output
         teacher_cls, teacher_patch = teacher_output
+
+        student_cls = student_cls.detach()
+        student_patch = student_patch.detach()
+        teacher_cls = teacher_cls.detach()
+        teacher_patch = teacher_patch.detach()                                              #------------------- I added this detached () function ...WRONG?
         
         if student_local_cls is not None:
             student_cls = torch.cat([student_cls, student_local_cls])
